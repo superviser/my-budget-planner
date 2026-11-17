@@ -1,0 +1,3 @@
+The fonts in this folder (Nunito, Playfair Display, Caveat) are licensed under the SIL Open Font License, Version 1.1.
+The full licence and the copyright notice of each font are in the OFL-<font>.txt files beside this one.
+https://openfontlicense.org
