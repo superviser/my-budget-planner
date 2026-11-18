@@ -156,7 +156,22 @@
     return data;
   }
 
+  /* A copy that a newer version of the app has saved is left exactly as it is: this device neither takes it nor writes over it.
+     An older version would not understand all of it, and would send it back with parts missing. */
+  const newerCopy = () => {
+    const er = new Error(A.t('Another device uses a newer version of the app. Until this device has it too, nothing is sent or fetched, so nothing can be lost.'));
+    er.newer = true;
+    if (A.update) A.update.nudge();
+    return er;
+  };
   async function call(path, method, body, cfg) {
+    let data;
+    try { data = await rawCall(path, method, body, cfg); }
+    catch (e) { if (e.data && A.tooNew(e.data.state)) throw newerCopy(); throw e; }
+    if (data && A.tooNew(data.state)) throw newerCopy();
+    return data;
+  }
+  async function rawCall(path, method, body, cfg) {
     cfg = cfg || C.cfg;
     if (isSheet(cfg.url)) return callSheet(path, method, body, cfg);
     const ctl = window.AbortController ? new AbortController() : null, timer = setTimeout(() => { if (ctl) ctl.abort(); }, 20000);
@@ -248,14 +263,14 @@
     }
   }
   C.push = force => serial(async () => {
-    if (!C.cfg || !A.licensed) return false;
+    if (!C.cfg || !A.licensed || A.stale) return false;
     await fresh();
     if (!force && !dirty()) { if (C.status !== 'ok') mark('ok'); return true; }
     return send(force);
   });
   C.queue = function () { if (!C.cfg || !A.licensed) return; clearTimeout(pushTimer); pushTimer = setTimeout(() => C.push(), 4000); };
   C.pull = () => serial(async () => {
-    if (!C.cfg) return false;
+    if (!C.cfg || A.stale) return false;
     await fresh();
     try {
       const r = await call('/data?since=' + encodeURIComponent(C.cfg.syncedAt || 0));

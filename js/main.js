@@ -99,6 +99,7 @@
 
   A.on(what => {
     if (what === 'saved' || what === 'quiet') return;
+    if (what === 'stale') { ready = false; A.closeSheets(); newer(false); return; }
     if (what === 'saveerror') { A.toast(A.t('This device would not save just now. Keep the app open: it keeps trying.'), { ms: 9000 }); return; }
     if (what === 'saveok') { A.toast(A.t('Saved. Everything is safe again.')); return; }
     if (what === 'cloud') { if (A.route === 'settings' && !document.querySelector('dialog[open]')) paint(); return; }
@@ -112,6 +113,19 @@
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const notice = (lines, button) => A.$('#app').replaceChildren(h('div.boot', null, lines.map(t => h('p', { text: t })),
     button ? h('p', null, h('button.btn.primary', { type: 'button', onclick: () => location.reload() }, button)) : null));
+
+  /* Data that a newer version of the app has saved is never opened by this one: it would not understand all of it, and would
+     save it back with parts missing. Nothing more is read and nothing is written; the newer version is fetched if this copy can. */
+  const newer = async first => {
+    if (first) await A.loadLang(A.pickLang('auto'));
+    notice([A.t('A newer version of the app has already saved here. Nothing has been changed, and nothing is lost.'),
+      A.t('Reload to get the newer version. If this shows again, wait a minute and reload once more.')], A.t('Reload'));
+    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !/[?&]nosw\b/.test(location.search)) {
+      navigator.serviceWorker.register('sw.js').catch(() => { /* nothing to fetch it with */ });
+      A.update.start();
+      A.update.nudge();
+    }
+  };
 
   async function boot() {
     try { await A.store.ready(); }
@@ -138,6 +152,7 @@
     if (A.licensed) {
       try { saved = await A.store.get('state'); cloud = await A.store.get('cloud'); me = await A.store.get('me'); }
       catch (e) { await unreadable(); return; }
+      if (A.tooNew(saved)) { await newer(true); return; }
     }
     A.keepStorage();
     await A.backupLoad(lic && lic.at);
@@ -146,8 +161,11 @@
     const force = (/[?&]lang=([a-z]{2})\b/.exec(location.search) || [])[1];
     A.meId = me || null;
     if (known) {
+      /* the first time a new release opens what an earlier one saved, a copy of it as it was is kept before anything is written */
+      const before = (await A.update.changed()) ? JSON.stringify(saved) : '';
       A.state = A.migrate(saved);
       await A.loadLang(A.pickLang(A.look().lang));
+      if (before) await A.update.keepBefore(before);
     } else {
       await A.loadLang(A.pickLang(force || 'auto'));
       A.state = A.licensed ? A.blank() : A.sample();
@@ -174,7 +192,7 @@
     A.render();
     window.addEventListener('hashchange', () => {
       /* a one-tap link opened while the app is already showing: start again so it is handled like any other arrival */
-      if (/^#(unlock|join|move)=/.test(location.hash)) location.reload(); else A.render();
+      if (/^#(unlock|join|move)=/.test(location.hash)) A.reload(); else A.render();
     });
     if (lostNote) A.toast(A.t('Your budget is kept in your personal cloud, which could not be reached just now. It comes back by itself once this device is online.'), { ms: 12000 });
     if (A.licensed && !A.state.meta.onboarded && !(link && (link.join || link.state))) A.onboard();
@@ -214,7 +232,7 @@
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         /* the worker has just taken charge: hand over what was loaded before it did, and once more for what was still on its way */
         keep(); setTimeout(keep, 4000);
-        if (had) A.toast(A.t('A newer version of the app is ready.'), { action: A.t('Reload'), fn: () => location.reload(), ms: 20000 });
+        if (had) A.toast(A.t('A newer version of the app is ready.'), { action: A.t('Reload'), fn: A.reload, ms: 20000 });
         had = true;
       });
     }

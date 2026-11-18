@@ -202,11 +202,21 @@ window.App = window.App || {};
   let bc = null;
   try { bc = window.BroadcastChannel ? new BroadcastChannel('budget-planner') : null; } catch (e) { bc = null; }
   let saveTimer = null, unsaved = false;
+  /* The shape of saved data. Raise it in a release whose data an older version would misread or throw away.
+     An older version then leaves such data exactly as it is: it shows a notice and fetches the update, instead of "repairing"
+     what it does not understand. That holds for this device, for another tab, for the cloud, for backups and for links. */
+  A.SCHEMA = 1;
+  A.tooNew = s => !!(s && typeof s === 'object' && +s.v > A.SCHEMA);
+  /* this tab has fallen behind a newer version: from here on it writes nothing, whatever it still holds */
+  const stale = () => { if (A.stale) return; A.stale = true; unsaved = false; clearTimeout(saveTimer); saveTimer = null; A.emit('stale'); };
   A.hasUnsaved = () => unsaved;
   if (bc) bc.onmessage = e => {
     const m = e.data || {};
-    if (m.t !== 'saved' || m.tab === TAB || !A.licensed || !A.state || unsaved) return;
+    if (m.t !== 'saved' || m.tab === TAB || !A.licensed || !A.state || A.stale) return;
+    if (m.v > A.SCHEMA) { stale(); return; }
+    if (unsaved) return;
     A.store.get('state').then(s => {
+      if (A.tooNew(s)) { stale(); return; }
       if (!A.validState(s) || unsaved || s.meta.updatedAt === A.state.meta.updatedAt) return;
       A.state = A.migrate(s);
       A.cache = {};
@@ -216,12 +226,14 @@ window.App = window.App || {};
   /* Writes only when something changed, so nothing is left half-written when the page is put away. */
   A.flush = function () {
     clearTimeout(saveTimer); saveTimer = null;
+    if (A.stale) return Promise.resolve(false);
     if (!A.licensed || !A.state || !unsaved) return Promise.resolve(true);
     unsaved = false;
     const at = A.state.meta.updatedAt;
     return A.store.set('state', A.state).then(() => {
       if (A.saveFailed) { A.saveFailed = false; A.emit('saveok'); }
-      if (bc) bc.postMessage({ t: 'saved', at: at, tab: TAB });
+      if (bc) bc.postMessage({ t: 'saved', at: at, tab: TAB, v: A.SCHEMA });
+      if (A.update) A.update.ran();
       A.emit('saved');
       return true;
     }, () => {
@@ -232,7 +244,7 @@ window.App = window.App || {};
       return false;
     });
   };
-  const later = () => { if (A.licensed) { clearTimeout(saveTimer); saveTimer = setTimeout(A.flush, 300); } };
+  const later = () => { if (A.licensed && !A.stale) { clearTimeout(saveTimer); saveTimer = setTimeout(A.flush, 300); } };
   /* Every change goes through commit. In the demo nothing is written anywhere. */
   A.commit = function (fn, what) {
     if (fn) fn(A.state);
@@ -245,6 +257,8 @@ window.App = window.App || {};
   /* Housekeeping that is worth saving on this device but is not a change to the budget:
      it does not redraw anything and does not count as news for other devices. */
   A.touch = function () { unsaved = true; later(); };
+  /* what was typed a moment ago is written before the page is loaded again */
+  A.reload = function () { const go = () => location.reload(); A.flush().then(go, go); };
 
   A.DEFAULT_CATS = [
     [A_T('Housing'), '🏠'], [A_T('Groceries'), '🛒'], [A_T('Eating out'), '🍜'], [A_T('Transport'), '🚌'], [A_T('Bills'), '💡'],
@@ -254,7 +268,7 @@ window.App = window.App || {};
   A.blank = function () {
     const tr = A.t || (s => s);
     return {
-      v: 1,
+      v: A.SCHEMA,
       meta: { createdAt: Date.now(), updatedAt: Date.now(), sample: false, onboarded: false, lastOpen: A.today() },
       profile: {
         appName: CFG.defaultAppName, icon: '🌿', iconImg: '', userName: '', currency: A.guessCurrency(), weekStart: 1,
@@ -272,6 +286,7 @@ window.App = window.App || {};
   /* Brings a saved, restored, moved or synced budget up to date and throws out anything malformed,
      so one bad record can never stop the app from opening. */
   A.migrate = function (s) {
+    if (A.tooNew(s)) throw new Error('saved by a newer version');   /* never "repaired": see A.SCHEMA */
     const b = A.blank(), def = Object.assign({}, b.profile);
     s.meta = Object.assign(b.meta, obj(s.meta) ? s.meta : {});
     s.profile = Object.assign(b.profile, obj(s.profile) ? s.profile : {});
@@ -298,7 +313,7 @@ window.App = window.App || {};
     ['funds', 'debts', 'goals', 'pause', 'people'].forEach(k => { s[k] = s[k].filter(x => obj(x)).map(withId); });
     s.people.forEach(p => { if (typeof p.name !== 'string') p.name = '?'; if (p.look && !obj(p.look)) delete p.look; });
     s.checkins = s.checkins.filter(A.isDate);
-    s.v = 1;
+    s.v = A.SCHEMA;
     return s;
   };
   A.validState = s => !!(obj(s) && obj(s.profile) && Array.isArray(s.tx) && Array.isArray(s.cats));

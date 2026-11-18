@@ -2,9 +2,9 @@
 'use strict';
 /* Stamped by tools/stamp.py on every release. A new stamp makes the browser fetch the whole app again in one go,
    so a device never runs half an old version and half a new one. */
-const VERSION = 'd82df58ad89f';
+const VERSION = '69dd91b46f4d';
 /* When this release was made, and where newer ones are published: see "fixes reach every copy" below. Stamped as well. */
-const BUILT = 1794957100;
+const BUILT = 1794962052;
 const UPDATES = 'https://raw.githubusercontent.com/superviser/my-budget-planner/';
 const SHELL = 'shell-' + VERSION, CUSTOM = 'custom';
 const FILES = [
@@ -45,7 +45,7 @@ self.addEventListener('fetch', e => {
     return;
   }
   /* every time the app is opened: is there a newer release? Asked from here, so it happens even if the page itself is broken */
-  if (req.mode === 'navigate') e.waitUntil(checkUpdates(false));
+  if (req.mode === 'navigate') e.waitUntil(opened());
   e.respondWith((async () => {
     const custom = await (await caches.open(CUSTOM)).match(key);
     if (custom) return custom;
@@ -112,10 +112,16 @@ async function upState() {
   try { const r = await (await caches.open(UPSTATE)).match(base() + '__state'); return r ? await r.json() : {}; }
   catch (err) { return {}; }
 }
-async function upRemember(patch) {
-  const st = Object.assign(await upState(), patch);
-  await (await caches.open(UPSTATE)).put(base() + '__state', json(st));
-  return st;
+/* one change at a time, so two that arrive together cannot undo each other */
+let upWrite = Promise.resolve();
+function upRemember(patch) {
+  const p = upWrite.then(async () => {
+    const st = Object.assign(await upState(), patch);
+    await (await caches.open(UPSTATE)).put(base() + '__state', json(st));
+    return st;
+  });
+  upWrite = p.catch(() => null);
+  return p;
 }
 
 /* update.json is { sig, body }: body is the exact text that was signed */
@@ -227,9 +233,17 @@ async function checkNow(asked) {
   return upRemember(done);
 }
 
+/* The page says hello once it is up and running. An opening that never got that far means the page itself is broken:
+   the next opening then looks for a fix straight away instead of waiting out the hour. */
+async function opened() {
+  const st = await upState(), stuck = !!st.openedAt && !(st.helloAt >= st.openedAt);
+  await upRemember({ openedAt: Date.now() });
+  return checkUpdates(stuck && !st.off);
+}
+
 /* from the page: whether this copy wants updates at all, a request to look right now, and always an answer with where things stand */
 async function updateAsked(d, client) {
-  if (typeof d.auto === 'boolean' && !!(await upState()).off === d.auto) await upRemember({ off: !d.auto });
+  await upRemember(typeof d.auto === 'boolean' ? { helloAt: Date.now(), off: !d.auto } : { helloAt: Date.now() });
   const st = d.check ? await checkUpdates(true) : await upState();
   const up = await kept();
   if (client) client.postMessage({ type: 'update-state', on: !!UPDATES, built: up ? up.built : BUILT, state: st, checked: !!d.check });

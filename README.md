@@ -11,6 +11,9 @@ You do not have to do anything. When your copy is opened, it asks this repositor
 installs it by itself. Only releases signed by the maker of the app are accepted, and your own `config.js` is never
 replaced. Nothing about you, your address or what you entered is sent.
 
+An update only replaces the app's own files. What you entered stays exactly as it is, and the app keeps a copy
+from before each update in Settings under **Earlier copies**.
+
 To switch this off, open `config.js` in your copy, change `updates: true` to `updates: false`, and upload the
 folder again.
 

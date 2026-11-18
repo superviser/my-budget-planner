@@ -382,14 +382,19 @@
   /* ---------- backups ---------- */
   /* Keeps a copy (of the current budget, or of the one handed in) under "Earlier copies". Throws if it cannot be written,
      so nothing is replaced unless the copy that was promised really exists. */
+  /* five copies that a person or a sync made, plus the one from before the latest update of the app:
+     an update never pushes out the others */
+  A.trimCopies = list => list.filter(s => s.kind !== 'update').slice(0, 5).concat(list.filter(s => s.kind === 'update').slice(0, 1)).sort((a, b) => b.at - a.at);
+  const tooNewMsg = () => A.t('This was saved by a newer version of the app. Update the app first, then try again.');
   A.snapshot = async function (reason, state) {
     if (!A.licensed) return;
     const list = (await A.store.get('snapshots')) || [];
     list.unshift({ at: Date.now(), reason: reason, state: JSON.parse(JSON.stringify(state || A.state)) });
-    await A.store.set('snapshots', list.slice(0, 5));
+    await A.store.set('snapshots', A.trimCopies(list));
   };
   const noCopy = () => A.toast(A.t('An earlier copy could not be kept, so nothing was changed. Free some space on this device and try again.'), { ms: 8000 });
   A.replaceState = async function (state, reason) {
+    if (A.tooNew(state)) { A.toast(tooNewMsg(), { ms: 9000 }); return false; }
     try { await A.snapshot(reason); } catch (e) { noCopy(); return false; }
     A.state = A.migrate(JSON.parse(JSON.stringify(state)));
     A.cache = {};
@@ -464,6 +469,7 @@
       if (f.size > 40e6) { A.toast(A.t('That file is not a backup from this app.')); return; }
       f.text().then(t => {
         const d = JSON.parse(t), st = d && d.state ? d.state : d;
+        if (A.tooNew(st)) { A.toast(tooNewMsg(), { ms: 9000 }); return; }
         if (!A.validState(st)) throw new Error('bad');
         A.confirm(A.t('Restore this backup?'), A.t('It replaces what is in the app now. The current version is kept under “Earlier copies” in case you change your mind.'), A.t('Restore'), () => A.replaceState(st, A.t('Before restoring a backup')).then(ok => { if (ok) A.toast(A.t('Backup restored.')); }));
       }).catch(() => A.toast(A.t('That file is not a backup from this app.')));
@@ -517,6 +523,7 @@
     } catch (e) { return { code: '', bad: true }; }
   };
   A.afterLink = function (link, hadData) {
+    if (link.newer) { A.toast(tooNewMsg(), { ms: 9000 }); return; }
     if (link.bad) { A.toast(A.t('That setup link is incomplete. Copy it again on the other device.'), { ms: 7000 }); return; }
     if (!A.licensed) { A.unlockSheet(link.code ? A.t('The code in that link did not work. Type the code from your purchase instead.') : A.t('Unlock this device first, then open the setup link again.')); return; }
     if (link.join) { A.joinCloud(link.join, hadData); return; }
@@ -545,7 +552,7 @@
     return JSON.parse(new TextDecoder().decode(raw));
   }
   A.openMove = async function (link) {
-    try { const d = await unpack(link.move); link.code = typeof d.c === 'string' ? d.c : ''; link.state = A.validState(d.s) ? d.s : null; if (!link.state) link.bad = true; }
+    try { const d = await unpack(link.move); link.code = typeof d.c === 'string' ? d.c : ''; link.state = A.validState(d.s) && !A.tooNew(d.s) ? d.s : null; if (A.tooNew(d.s)) link.newer = true; else if (!link.state) link.bad = true; }
     catch (e) { link.bad = true; }
   };
   A.receiveMove = function (state, hadData) {
@@ -653,7 +660,7 @@
       };
       const choose = saved => {
         const sample = A.state.meta.sample, opts = [];
-        if (A.validState(saved)) opts.push(A.btn(A.t('Open my saved budget'), () => finish('saved', saved), 'primary'));
+        if (A.validState(saved) && !A.tooNew(saved)) opts.push(A.btn(A.t('Open my saved budget'), () => finish('saved', saved), 'primary'));
         if (!sample) opts.push(A.btn(A.t('Keep what I just entered'), () => finish('keep', saved), opts.length ? null : 'primary'));
         opts.push(A.btn(A.t('Start fresh with my own numbers'), () => finish('fresh', saved), opts.length ? null : 'primary'));
         if (sample) opts.push(A.btn(A.t('Keep the sample budget to explore'), () => finish('keep', saved)));
@@ -661,7 +668,8 @@
       };
       const go = () => {
         if (!A.codeOk(code.value)) { msg.textContent = A.t('That code does not match. Check for a typo: it is in the PDF from your purchase.'); return; }
-        A.store.get('state').then(choose, () => choose(null));
+        /* what a newer version saved here is neither opened nor replaced */
+        A.store.get('state').then(s => { if (A.tooNew(s)) { msg.textContent = tooNewMsg(); return; } choose(s); }, () => choose(null));
       };
       body.append(note ? h('p.note', { text: note }) : null,
         h('p.lead', { text: A.t('The demo keeps nothing. Enter the code from your purchase and your budget is saved on this device from then on.') }),
