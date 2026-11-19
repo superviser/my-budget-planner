@@ -2,9 +2,9 @@
 'use strict';
 /* Stamped by tools/stamp.py on every release. A new stamp makes the browser fetch the whole app again in one go,
    so a device never runs half an old version and half a new one. */
-const VERSION = '69dd91b46f4d';
+const VERSION = '64c7938a9825';
 /* When this release was made, and where newer ones are published: see "fixes reach every copy" below. Stamped as well. */
-const BUILT = 1794962052;
+const BUILT = 1795130179;
 const UPDATES = 'https://raw.githubusercontent.com/superviser/my-budget-planner/';
 const SHELL = 'shell-' + VERSION, CUSTOM = 'custom';
 const FILES = [

@@ -4,7 +4,7 @@ window.APP_CONFIG = {
   defaultAppName: 'My Budget',
 
   // Where the "Get the full version" buttons send people: your Etsy listing.
-  buyUrl: 'https://www.etsy.com/',
+  buyUrl: 'https://www.etsy.com/listing/4620542376',
 
   // Fingerprints (SHA-256) of the unlock codes you hand to buyers.
   // The codes themselves are never stored here. Manage them with:
